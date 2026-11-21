@@ -193,10 +193,13 @@ public class AppointmentService {
 
 
     public AppointmentResult getAppointment(String id){
-        if(id==null){
-            return failure(400 ,"Need Appointment Id to fetch data");
+        if(!ObjectId.isValid(id)){
+            return failure(400 ,"A valid appointment ID is required");
         }
         Document doc=appointmentRepository.getAppointment(id);
+        if(doc==null){
+            return failure(404,"Appointment not found");
+        }
         if(doc.containsKey("error")){
             return failure(400,(String) doc.get("error"));
         }
