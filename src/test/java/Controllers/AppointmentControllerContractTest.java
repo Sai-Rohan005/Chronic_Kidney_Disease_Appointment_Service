@@ -34,11 +34,14 @@ class AppointmentControllerContractTest {
         context.refresh();
         mvc = webAppContextSetup(context).build();
         repository = context.getBean(AppointmentRepository.class);
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("patient@example.invalid", "token",
+                        java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_Patient"))));
     }
-    @AfterEach void close() { context.close(); }
+    @AfterEach void close() { context.close(); org.springframework.security.core.context.SecurityContextHolder.clearContext(); }
 
     @Test void fetchesByPathIdWithoutRequestBody() throws Exception {
-        when(repository.getAppointment(ID)).thenReturn(new Document("clinical_data", Map.of("age", 50))
+        when(repository.getAppointment(ID)).thenReturn(new Document("clinical_data", Map.of("age", 50)).append("patient_email", "patient@example.invalid")
                 .append("ultrasound_data", List.of("https://example.invalid/image.png")));
         mvc.perform(get("/appointments/{id}", ID))
                 .andExpect(status().isOk())
@@ -91,7 +94,7 @@ class AppointmentControllerContractTest {
     static class Config {
         @Bean AppointmentRepository repository() { return mock(AppointmentRepository.class); }
         @Bean AppointmentService service(AppointmentRepository repository) {
-            return new AppointmentService(repository, mock(Cloudinary.class), "http://localhost:8081/auth/getUserAndRole");
+            return new AppointmentService(repository, mock(Cloudinary.class));
         }
         @Bean AppointmentController controller(AppointmentService service) { return new AppointmentController(service); }
     }

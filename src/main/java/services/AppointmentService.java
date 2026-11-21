@@ -1,17 +1,13 @@
 package services;
 
 import Database.AppointmentRepository;
+import com.ckd.auth.CurrentCaller;
 import com.cloudinary.Cloudinary;
 import com.cloudinary.utils.ObjectUtils;
-import org.springframework.beans.factory.annotation.Value;
 import org.bson.Document;
 import org.bson.types.ObjectId;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.http.HttpHeaders;
-import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.RestClientResponseException;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,17 +36,13 @@ public class AppointmentService {
 
     private final AppointmentRepository appointmentRepository;
     private final Cloudinary cloudinary;
-    private final RestClient restClient = RestClient.create();
-    private final String authenticationUrl;
 
     public AppointmentService(
             @Lazy AppointmentRepository appointmentRepository,
-            Cloudinary cloudinary,
-            @Value("${authentication.authentication-url}") String authenticationUrl
+            Cloudinary cloudinary
     ) {
         this.appointmentRepository = appointmentRepository;
         this.cloudinary = cloudinary;
-        this.authenticationUrl = authenticationUrl;
     }
 
     public AppointmentResult getAllImages(String rawPatientEmail) {
@@ -58,6 +50,7 @@ public class AppointmentService {
         if (!validEmail(patientEmail)) {
             return failure(400, "A valid patient email is required");
         }
+        CurrentCaller.requirePatient(patientEmail);
         return new AppointmentResult(200, Map.of(
                 "images", appointmentRepository.getAllImages(patientEmail)
         ));
@@ -68,6 +61,7 @@ public class AppointmentService {
         if (!validEmail(patientEmail)) {
             return failure(400, "A valid patient email is required");
         }
+        CurrentCaller.requirePatient(patientEmail);
         return new AppointmentResult(200, Map.of(
                 "uploads", appointmentRepository.getAllImages(patientEmail)
         ));
@@ -83,6 +77,7 @@ public class AppointmentService {
             return failure(400, "Valid patient_email and doctor_email are required");
         }
 
+        CurrentCaller.requirePatient(patientEmail);
         LocalDate appointmentDate;
         try {
             appointmentDate = LocalDate.parse(stringValue(dateValue));
@@ -154,33 +149,7 @@ public class AppointmentService {
 
 
     public AppointmentResult getAllAppointments(String token) {
-        if (token == null || token.isBlank()) {
-            return failure(401, "Authentication token is required");
-        }
-
-        UserIdentity user;
-        try {
-            user = restClient.get()
-                    .uri(authenticationUrl)
-                    .header(HttpHeaders.AUTHORIZATION, token)
-                    .retrieve()
-                    .body(UserIdentity.class);
-        } catch (RestClientResponseException exception) {
-            logger.error("Authentication service returned HTTP {}", exception.getStatusCode());
-            int status = exception.getStatusCode().value();
-            return failure(status == 401 || status == 403 ? 401 : 502,
-                    "Unable to authenticate the user");
-        } catch (RestClientException exception) {
-            logger.error("Could not reach the authentication service", exception);
-            return failure(502, "Authentication service is unavailable");
-        }
-
-        if (user == null || !validEmail(normalizeEmail(user.email()))) {
-            return failure(401, "Authentication service returned an invalid user");
-        }
-        if (!"Patient".equals(user.role()) && !"Doctor".equals(user.role())) {
-            return failure(403, "Unsupported user role");
-        }
+        var user = CurrentCaller.user();
 
         List<Document> appointments = appointmentRepository.getAllAppointments(
                 normalizeEmail(user.email()),
@@ -189,7 +158,6 @@ public class AppointmentService {
         return new AppointmentResult(200, Map.of("appointments", appointments));
     }
 
-    private record UserIdentity(String email, String role) {}
 
 
     public AppointmentResult getAppointment(String id){
@@ -203,6 +171,7 @@ public class AppointmentService {
         if(doc.containsKey("error")){
             return failure(400,(String) doc.get("error"));
         }
+        CurrentCaller.requireAppointment(doc);
         return new AppointmentResult(200 ,Map.of("data",doc));
     }
 
@@ -213,6 +182,8 @@ public class AppointmentService {
         if (!ObjectId.isValid(appointmentId)) {
             return failure(400, "A valid appointment ID is required");
         }
+        AppointmentResult access = getAppointment(appointmentId);
+        if (access.status() != 200) return access;
         if (updates == null || updates.size() != 1) {
             return failure(400, "Provide exactly one supported appointment field to update");
         }
